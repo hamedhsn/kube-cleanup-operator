@@ -33,6 +33,7 @@ func main() {
 	keepFailedHours := flag.Int("keep-failures", -1, "Number of hours to keep faild jobs, -1 - forever (default) 0 - never, >0 number of hours")
 	keepPendingHours := flag.Int("keep-pending", -1, "Number of hours to keep pending jobs, -1 - forever (default) >0 number of hours")
 	dryRun := flag.Bool("dry-run", false, "Print only, do not delete anything.")
+	jobType:= flag.String("job-type", "Job", "select types of jobs e.g., Job, TFJob etc")
 	flag.Parse()
 
 	// Create clientset for interacting with the kubernetes cluster
@@ -48,12 +49,13 @@ func main() {
 		"keepFailedHours":  strconv.Itoa(*keepFailedHours),
 		"keepPendingHours": strconv.Itoa(*keepPendingHours),
 		"dryRun":           strconv.FormatBool(*dryRun),
+		"jobType": *jobType,
 	}
 	if *dryRun {
 		log.Println("Performing dry run...")
 	}
-	log.Printf("Configured namespace: '%s', keepSuccessHours: %d, keepFailedHours: %d", options["namespace"], *keepSuccessHours, *keepFailedHours)
-	log.Printf("Starting controller...")
+	log.Printf("Configured namespace: '%s', keepSuccessHours: %d, keepFailedHours: %d, job_type: %s", options["namespace"], *keepSuccessHours, *keepFailedHours, options["jobType"])
+	log.Printf("HSN1 Starting controller...")
 
 	go controller.NewPodController(clientset, options).Run(stop, wg)
 

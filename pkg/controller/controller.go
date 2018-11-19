@@ -47,6 +47,7 @@ func NewPodController(kclient *kubernetes.Clientset, opts map[string]string) *Po
 	keepFailedHours, _ := strconv.Atoi(opts["keepFailedHours"])
 	keepPendingHours, _ := strconv.Atoi(opts["keepPendingHours"])
 	dryRun, _ := strconv.ParseBool(opts["dryRun"])
+	jobType := opts["jobType"]
 	version, err := kclient.ServerVersion()
 
 	if err != nil {
@@ -69,11 +70,11 @@ func NewPodController(kclient *kubernetes.Clientset, opts map[string]string) *Po
 	)
 	podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(cur interface{}) {
-			podWatcher.doTheMagic(cur, keepSuccessHours, keepFailedHours, keepPendingHours, dryRun, *version)
+			podWatcher.doTheMagic(cur, keepSuccessHours, keepFailedHours, keepPendingHours, dryRun, jobType, *version)
 		},
 		UpdateFunc: func(old, cur interface{}) {
 			if !reflect.DeepEqual(old, cur) {
-				podWatcher.doTheMagic(cur, keepSuccessHours, keepFailedHours, keepPendingHours, dryRun, *version)
+				podWatcher.doTheMagic(cur, keepSuccessHours, keepFailedHours, keepPendingHours, dryRun, jobType, *version)
 			}
 		},
 	})
@@ -100,10 +101,10 @@ func (c *PodController) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	<-stopCh
 }
 
-func (c *PodController) doTheMagic(cur interface{}, keepSuccessHours int, keepFailedHours int, keepPendingHours int, dryRun bool, version version.Info) {
+func (c *PodController) doTheMagic(cur interface{}, keepSuccessHours int, keepFailedHours int, keepPendingHours int, dryRun bool, jobType string, version version.Info) {
 
 	podObj := cur.(*v1.Pod)
-	parentJobName := c.getParentJobName(podObj, version)
+	parentJobName := c.getParentJobName(podObj, jobType, version)
 	// if we couldn't find a prent job name, ignore this pod
 	if parentJobName == "" {
 		log.Printf("Pod %s was not created by a job... ignoring", podObj.Name)
@@ -111,7 +112,7 @@ func (c *PodController) doTheMagic(cur interface{}, keepSuccessHours int, keepFa
 	}
 
 	executionTimeHours := c.getExecutionTimeHours(podObj)
-	log.Printf("Checking pod %s with %s status that was executed %f hours ago", podObj.Name, podObj.Status.Phase, executionTimeHours)
+	log.Printf("Checking pod %s with %s status that was executed %f hours ago -- %s", podObj.Name, podObj.Status.Phase, executionTimeHours, parentJobName)
 	switch podObj.Status.Phase {
 	case v1.PodSucceeded:
 		if keepSuccessHours == 0 || (keepSuccessHours > 0 && executionTimeHours > float32(keepSuccessHours)) {
@@ -167,7 +168,7 @@ func (c *PodController) deleteObjects(podObj *v1.Pod, parentJobName string, dryR
 	return
 }
 
-func (c *PodController) getParentJobName(podObj *v1.Pod, version version.Info) (parentJobName string) {
+func (c *PodController) getParentJobName(podObj *v1.Pod, jobType string, version version.Info) (parentJobName string) {
 
 	oldVersion := false
 
@@ -190,13 +191,14 @@ func (c *PodController) getParentJobName(podObj *v1.Pod, version version.Info) (
 	if oldVersion {
 		var createdMeta CreatedByAnnotation
 		json.Unmarshal([]byte(podObj.ObjectMeta.Annotations["kubernetes.io/created-by"]), &createdMeta)
-		if createdMeta.Reference.Kind == "Job" {
+
+		if createdMeta.Reference.Kind == jobType {
 			parentJobName = createdMeta.Reference.Name
 		}
 	} else {
 		// Going all over the owners, looking for a job, usually there is only one owner
 		for _, ow := range podObj.OwnerReferences {
-			if ow.Kind == "Job" {
+			if ow.Kind == jobType {
 				parentJobName = ow.Name
 			}
 		}
